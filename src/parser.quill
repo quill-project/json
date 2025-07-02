@@ -1,0 +1,335 @@
+
+mod json
+
+// Represents a JSON parsing error, providing the offset and an error message.
+pub struct ParseError(
+    offset: Int,
+    reason: String
+)
+
+pub fun ParseError::as_string(self: ParseError) -> String
+    = "Malformed JSON at offset _: _"
+    |> fmt(self.offset |> as_string(), self.reason)
+
+// Attempts to parse a JSON value from a JSON source string.
+pub fun Json::parse(text: String) -> Result[Json, ParseError] {
+    val p = JsonParser(0, text, Option::None)
+    val r: Json = p |> parse_any()
+    match p.error {
+        None { return Result::Ok(r) }
+        Some(e) { return Result::Err(e) }
+    }
+}
+
+// Represents a pointer into the given input string.
+// Keeps track of the offset, the remaining text and the current error state.
+struct JsonParser(
+    offset: Int,
+    remaining: String,
+    error: Option[ParseError]
+)
+
+// Returns the current character (panics if there are no more characters)
+fun JsonParser::current(self: JsonParser) -> String
+    = self.remaining |> at(0)
+
+// Returns false if there are remaining characters, and otherwise true
+fun JsonParser::at_end(self: JsonParser) -> Bool
+    = self.remaining |> is_empty()
+
+// Checks if the parser error state contains an error
+fun JsonParser::has_error(self: JsonParser) -> Bool
+    = self.error |> is_some()
+
+// Advances the pointer by N characters
+fun JsonParser::advance(self: mut JsonParser, n: Int) {
+    val cn: Int = n |> clamp(0, self.remaining |> length())
+    self.remaining = self.remaining |> slice_from(cn)
+    self.offset = self.offset + cn
+}
+
+// Sets the current error state to an error describing that the current
+// character (or end of input) is unexpected
+fun JsonParser::set_error(self: mut JsonParser, exp: String) {
+    val got: String = if self |> at_end() { "the end of the input" }
+        else { "'_'" |> fmt(self.remaining |> slice_to(1)) }
+    val reason: String = "Expected _, but got _"
+        |> fmt(exp, got)
+    self.error = Option::Some(ParseError(self.offset, reason))
+}
+
+// Checks if the next characters in the remaining input match the given text
+fun JsonParser::is_next(self: JsonParser, text: String) -> Bool
+    = self.remaining |> starts_with(text)
+
+// Generates a human-readable string from the given list of expected next
+// tokens, e.g. converts [":", ",", "]"] into "':', ',' or ']'"
+fun gen_exp_str(exp: List[String]) -> String {
+    if exp |> is_empty() { 
+        return "nothing" 
+    }
+    val quote: Fun(String) -> String = |e| "'_'" |> fmt(e)
+    if (exp |> length()) == 1 { 
+        return exp |> at(0) |> quote()
+    }
+    val listed: String = exp 
+        |> slice_to(-1) 
+        |> values()
+        |> map(quote)
+        |> join(", ")
+    return "_ or _" 
+        |> fmt(listed, exp |> at(-1) |> quote())
+}
+
+// Expects the remaining input to match any of the given pieces of text.
+// If none match, the error state is set to represent this.
+// Returns a boolean representing whether the error state was set or not.
+fun JsonParser::expect(self: mut JsonParser, ...exp: List[String]) -> Bool {
+    if self |> at_end() {
+        self |> set_error(gen_exp_str(exp))
+        return true
+    }
+    val matches: Bool = exp 
+        |> values() 
+        |> any(|e| self |> is_next(e))
+    if !matches {
+        self |> set_error(gen_exp_str(exp))
+        return true
+    }
+    return false
+}
+
+// Advances the current character pointer by one character at a time until the
+// current character is not a whitespace or the end of the input is reached
+fun JsonParser::skip_space(self: mut JsonParser) {
+    while !(self |> at_end()) {
+        val c: String = self.remaining |> at(0)
+        val is_space: Bool = c == " "
+            || c == "\n"
+            || c == "\r"
+            || c == "\t"
+        if !is_space { break }
+        self |> advance(1)
+    }
+}
+
+// Parses an object, expecting the current character to be '{'.
+// Immediately returns after advancing past the closing '}'.
+// May set the error state and then return an inaccurate value.
+fun JsonParser::parse_object(self: mut JsonParser) -> mut Map[String, Json] {
+    if self |> expect("{") { return Map::empty() }
+    self |> advance(1)
+    self |> skip_space()
+    val values: mut Map[String, Json] = Map::empty()
+    while !(self |> is_next("}")) {
+        val key: String = self |> parse_string()
+        if self |> has_error() { return values }
+        self |> skip_space()
+        if self |> expect(":") { return values }
+        self |> advance(1)
+        val value: Json = self |> parse_any()
+        values |> set(key, value)
+        if self |> has_error() { return values }
+        if self |> expect(",", "}") { return values }
+        if self |> is_next(",") {
+            self |> advance(1)
+            self |> skip_space()
+        }
+    }
+    self |> advance(1)
+    return values
+}
+
+// Parses an array, expecting the current character to be '['.
+// Immediately returns after advancing past the closing ']'.
+// May set the error state and then return an inaccurate value.
+fun JsonParser::parse_array(self: mut JsonParser) -> mut List[Json] {
+    if self |> expect("[") { return List::empty() }
+    self |> advance(1)
+    self |> skip_space()
+    val values: mut List[Json] = List::empty()
+    while !(self |> is_next("]")) {
+        val value: Json = self |> parse_any()
+        values |> push(value)
+        if self |> has_error() { return values }
+        if self |> expect(",", "]") { return values }
+        if self |> is_next(",") {
+            self |> advance(1)
+        }
+    }
+    self |> advance(1)
+    return values
+}
+
+val HEX_DIGIT_DIGITS: String = "0123456789"
+val HEX_DIGIT_CHARS_UPPER: String = "ABCDEF"
+val HEX_DIGIT_CHARS_LOWER: String = "abcdef"
+
+// Parses a hexadecimal literal of the given length.
+// May set the error state and then return an inaccurate value.
+fun JsonParser::parse_hex_lit(self: mut JsonParser, n: Int) -> Int {
+    mut acc: Int = 0
+    for _: range(0, n) {
+        if self |> at_end() {
+            self |> set_error("a hexadecimal digit")
+            return -1
+        }
+        val c: String = self |> current()
+        val o: Option[Int] = HEX_DIGIT_DIGITS |> find(c) |> next()
+            |> or_else(|| HEX_DIGIT_CHARS_UPPER |> find(c) |> next())
+            |> or_else(|| HEX_DIGIT_CHARS_LOWER |> find(c) |> next())
+        match o {
+            Some(offset) {
+                acc = acc * 16 + offset
+                self |> advance(1)
+            }
+            None {
+                self |> set_error("a hexadecimal digit")
+                return -1
+            }
+        }
+    }
+    return acc
+}
+
+// Parses a string, expecting the current character to be '"'.
+// Immediately returns after advancing past the closing '"'.
+// May set the error state and then return an inaccurate value.
+fun JsonParser::parse_string(self: mut JsonParser) -> String {
+    if self |> expect("\"") { return "" }
+    self |> advance(1)
+    val content = StringBuilder::empty()
+    mut escaped: Bool = false
+    while !(self |> at_end()) && (!(self |> is_next("\"")) || escaped) {
+        val c: String = self |> current()
+        if !escaped {
+            escaped = c == "\\"
+            if c != "\\" { content |> push(c) }
+            self |> advance(1)
+            continue
+        }
+        if c == "u" {
+            self |> advance(1)
+            val code: Int = self |> parse_hex_lit(4)
+            if self |> has_error() { return "" }
+            content |> push(String::from_code(code))
+            continue
+        }
+        match c {
+            "b" { content |> push("\b") }
+            "f" { content |> push("\f") }
+            "n" { content |> push("\n") }
+            "r" { content |> push("\r") }
+            "t" { content |> push("\t") }
+            // includes '"', '/' and '\'
+            other { content |> push(other) }
+        }
+        self |> advance(1)
+        escaped = false
+}
+    if self |> expect("\"") { return "" }
+    self |> advance(1)
+    return content |> as_string()
+}
+
+val DIGIT_ZERO_CODE: Int = String::as_code("0")
+val DIGIT_NINE_CODE: Int = String::as_code("9")
+
+// Skips the current character until it is not a decimal digit or until the
+// end of the input is reached.
+// Skipped digits are pushed onto the provided string builder.
+fun JsonParser::skip_digits(self: mut JsonParser, out: mut StringBuilder) {
+    while !(self |> at_end()) {
+        val cc: Int = self |> current() |> as_code()
+        val is_digit: Bool = DIGIT_ZERO_CODE <= cc && cc <= DIGIT_NINE_CODE
+        if !is_digit { break }
+        out |> push(self |> current())
+        self |> advance(1)
+    }
+}
+
+
+// Parses a number, expecting the current character to be '-' or any digit.
+// Immediately returns after advancing past the last character belonging to
+// the number literal.
+// May set the error state and then return an inaccurate value.
+fun JsonParser::parse_number(self: mut JsonParser) -> Float {
+    val number = StringBuilder::empty()
+    if (self |> is_next("-")) {
+        number |> push(self |> current())
+        self |> advance(1)
+    }
+    self |> skip_digits(number)
+    if (self |> is_next(".")) {
+        number |> push(self |> current())
+        self |> advance(1)
+    }
+    self |> skip_digits(number)
+    if (self |> is_next("E")) || (self |> is_next("e")) {
+        number |> push(self |> current())
+        self |> advance(1)
+    }
+    if (self |> is_next("-")) || (self |> is_next("+")) {
+        number |> push(self |> current())
+        self |> advance(1)
+    }
+    self |> skip_digits(number)
+    if number |> is_empty() {
+        self |> set_error("a number") 
+        return Float::NAN
+    }
+    return number |> as_string() 
+        |> Float::parse()
+        |> expect("we only collect valid characters")
+}
+
+// Parses any JSON value, possibly surrounded by whitespaces.
+// May set the error state and then return an inaccurate value.
+fun JsonParser::parse_any(self: mut JsonParser) -> Json {
+    self |> skip_space()
+    if self |> at_end() { 
+        self |> set_error("any JSON value") 
+        return Json::Null
+    }
+    match self.remaining |> at(0) {
+        "{" {
+            val r: Json = self |> parse_object() |> Json::Object() 
+            self |> skip_space()
+            return r
+        }
+        "[" {
+            val r: Json = self |> parse_array() |> Json::Array()
+            self |> skip_space()
+            return r
+        }
+        "\"" {
+            val r: Json = self |> parse_string() |> Json::String()
+            self |> skip_space()
+            return r
+        }
+        "-" | "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9" {
+            val r: Json = self |> parse_number() |> Json::Number()
+            self |> skip_space()
+            return r
+        }
+        _ {
+            if self.remaining |> starts_with("true") {
+                self |> advance(4)
+                self |> skip_space()
+                return Json::Boolean(true)
+            }
+            if self.remaining |> starts_with("false") {
+                self |> advance(5)
+                self |> skip_space()
+                return Json::Boolean(false)
+            }
+            if self.remaining |> starts_with("null") {
+                self |> advance(4)
+                self |> skip_space()
+                return Json::Null
+            }
+        }
+    }
+    self |> set_error("any JSON value")
+    return Json::Null
+}

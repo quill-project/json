@@ -1,0 +1,112 @@
+
+mod json
+
+// A type that is able to represent all possible JSON values.
+pub enum Json(
+    Object: mut Map[String, Json],
+    Array: mut List[Json],
+    String: String,
+    Number: Float,
+    Boolean: Bool,
+    Null
+)
+
+pub fun Json::eq(lhs: Json, rhs: Json) -> Bool {
+    match Pair(lhs, rhs) {
+        Pair(Object(a), Object(b)) { return a == b }
+        Pair(Array(a), Array(b)) { return a == b }
+        Pair(String(a), String(b)) { return a == b }
+        Pair(Number(a), Number(b)) { return a == b }
+        Pair(Boolean(a), Boolean(b)) { return a == b }
+        Pair(Null, Null) { return true }
+        _ { return false }
+    }
+}
+
+pub fun Json::not_eq(lhs: Json, rhs: Json) -> Bool = !Json::eq(lhs, rhs)
+
+pub fun Json::as_hash(self: Json) -> Int {
+    match self {
+        Object(v) { return v |> as_hash() |> hash::combine_ord(0) }
+        Array(v) { return v |> as_hash() |> hash::combine_ord(1) }
+        String(v) { return v |> as_hash() |> hash::combine_ord(2) }
+        Number(v) { return v |> as_hash() |> hash::combine_ord(3) }
+        Boolean(v) { return v |> as_hash() |> hash::combine_ord(4) }
+        Null { return 5 }
+    }
+}
+
+pub fun Json::clone(self: Json) -> Json {
+    match self {
+        Object(v) { return v |> clone() |> Json::Object() }
+        Array(v) { return v |> clone() |> Json::Array() }
+        // any other are immutable
+        other { return other }
+    }
+}
+
+// Checks if the given JSON value is an object and - given that that is the
+// case - returns a map of each member name to its value.
+pub fun Json::get_object(self: Json) -> Option[mut Map[String, Json]] {
+    match self {
+        Object(v) { return Option::Some(v) }
+        _ { return Option::None }
+    }
+}
+
+// Checks if the given JSON value is an array and - given that that is the
+// case - returns the list of contained values.
+pub fun Json::get_list(self: Json) -> Option[mut List[Json]] {
+    match self {
+        Array(v) { return Option::Some(v) }
+        _ { return Option::None }
+    }
+}
+
+// Checks if the given JSON value is a string and - given that that is the
+// case - returns the string.
+pub fun Json::get_string(self: Json) -> Option[String] {
+    match self {
+        String(v) { return Option::Some(v) }
+        _ { return Option::None }
+    }
+}
+
+// Checks if the given JSON value is a number and - given that that is the
+// case - returns the number as a float.
+pub fun Json::get_float(self: Json) -> Option[Float] {
+    match self {
+        Number(v) { return Option::Some(v) }
+        _ { return Option::None }
+    }
+}
+
+// Checks if the given JSON value is a whole number and - given that that is the
+// case - returns the number as an integer.
+pub fun Json::get_int(self: Json) -> Option[Int] {
+    match self {
+        Number(v) {
+            if Float::trunc(v) != v { return Option::None }
+            return v |> as_int() |> Option::Some()
+        }
+        _ { return Option::None }
+    }
+}
+
+// Checks if the given JSON value is a boolean and - given that that is the
+// case - returns the boolean value.
+pub fun Json::get_bool(self: Json) -> Option[Bool] {
+    match self {
+        Boolean(v) { return Option::Some(v) }
+        _ { return Option::None }
+    }
+}
+
+// Checks if the given JSON value is null and - given that that is the
+// case - returns the unit value.
+pub fun Json::get_unit(self: Json) -> Option[Unit] {
+    match self {
+        Null { return Option::Some }
+        _ { return Option::None }
+    }
+}

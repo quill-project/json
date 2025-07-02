@@ -1,0 +1,61 @@
+
+mod json
+
+// Surrounds the given text in a string literal and escapes any
+// meta-characters inside of it.
+fun escape_string(input: String) -> String {
+    val r = StringBuilder::of("\"")
+    for c: input |> chars() {
+        match c {
+            "\\" { r |> push("\\\\") }
+            "\"" { r |> push("\\\"") }
+            "\b" { r |> push("\\b") }
+            "\f" { r |> push("\\f") }
+            "\n" { r |> push("\\n") }
+            "\r" { r |> push("\\r") }
+            "\t" { r |> push("\\t") }
+            o { r |> push(o) }
+        }
+    }
+    r |> push("\"")
+    return r |> as_string()
+}
+
+// Converts the given JSON value to a valid JSON string.
+pub fun Json::as_string(self: Json) -> String {
+    match self {
+        Object(v) {
+            val disp_entry: Fun(Pair[String, Json]) -> String 
+                = |e| escape_string(e.first)
+                |> concat(":")
+                |> concat(Json::as_string(e.second))
+            val disp_values: String = v 
+                |> entries()
+                |> map(disp_entry)
+                |> join(",")
+            return "{" 
+                |> concat(disp_values) 
+                |> concat("}")
+        }
+        Array(v) {
+            val disp_values: String = v 
+                |> values()
+                |> map(Json::as_string)
+                |> join(",")
+            return "["
+                |> concat(disp_values)
+                |> concat("]")
+        }
+        String(v) { return escape_string(v) }
+        Number(n) {
+            if !(n |> is_finite()) { return "null" }
+            return n |> as_string()
+        }
+        Boolean(b) {
+            return if b == true { "true" } else { "false" }
+        }
+        Null {
+            return "null"
+        }
+    }
+}
