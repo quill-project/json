@@ -1,7 +1,7 @@
 {
     "name": "json",
     "authors": ["schwalbe_t"],
-    "desciption": "A JSON parsing and generation library written in Quill.",
+    "description": "A JSON parsing and generation library written in Quill.",
     "type": "library",
     "backend": "any",
     "dependencies": [
