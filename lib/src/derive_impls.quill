@@ -1,0 +1,194 @@
+
+mod std
+
+use json::Json
+
+pub fun String::from_json_val(v: Json) -> Option[String] = v |> get_string()
+pub fun String::from_json(t: String) -> Option[String]
+    = t |> Json::parse() |> get_ok() 
+    |> map(String::from_json_val) |> flatten()
+
+pub fun Float::from_json_val(v: Json) -> Option[Float] = v |> get_float()
+pub fun Float::from_json(t: String) -> Option[Float]
+    = t |> Json::parse() |> get_ok() 
+    |> map(Float::from_json_val) |> flatten()
+
+pub fun Int::from_json_val(v: Json) -> Option[Int] = v |> get_int()
+pub fun Int::from_json(t: String) -> Option[Int]
+    = t |> Json::parse() |> get_ok() 
+    |> map(Int::from_json_val) |> flatten()
+
+pub fun Bool::from_json_val(v: Json) -> Option[Bool] = v |> get_bool()
+pub fun Bool::from_json(t: String) -> Option[Bool]
+    = t |> Json::parse() |> get_ok() 
+    |> map(Bool::from_json_val) |> flatten()
+
+pub fun Unit::from_json_val(v: Json) -> Option[Unit] = v |> get_unit()
+pub fun Unit::from_json(t: String) -> Option[Unit]
+    = t |> Json::parse() |> get_ok() 
+    |> map(Unit::from_json_val) |> flatten()
+
+pub fun Box::from_json_val[T](v: Json) -> Option[mut Box[T]]
+    = T::from_json_val(v)
+    |> map[T, mut Box[T]](Box)
+pub fun Box::from_json[T](t: String) -> Option[mut Box[T]]
+    = t |> Json::parse() |> get_ok() 
+    |> map(Box::from_json_val[T]) |> flatten()
+
+pub fun Pair::from_json_val[A, B](v: Json) -> Option[mut Pair[A, B]] {
+    mut mems: Map[String, Json] = Map::empty()
+    match v |> get_object() {
+        Some(m) { mems = m }
+        None { return Option::None }
+    }
+    val get_first: Fun() -> Option[A] = || {
+        match mems |> get("first") {
+            Some(first_j) { return A::from_json_val(first_j) }
+            None { return Option::None }
+        }
+    }
+    val get_second: Fun() -> Option[B] = || {
+        match mems |> get("second") {
+            Some(second_j) { return B::from_json_val(second_j) }
+            None { return Option::None }
+        }
+    }
+    match Pair(get_first(), get_second()) {
+        Pair(Some(a), Some(b)) { 
+            return Option::Some(Pair(a, b)) 
+        }
+        _ { return Option::None }
+    }
+}
+pub fun Pair::from_json[A, B](t: String) -> Option[mut Pair[A, B]]
+    = t |> Json::parse() |> get_ok() 
+    |> map(Pair::from_json_val[A, B]) |> flatten()
+
+pub fun Triplet::from_json_val[A, B, C](v: Json) -> Option[mut Triplet[A, B, C]] {
+    mut mems: Map[String, Json] = Map::empty()
+    match v |> get_object() {
+        Some(m) { mems = m }
+        None { return Option::None }
+    }
+    val get_first: Fun() -> Option[A] = || {
+        match mems |> get("first") {
+            Some(first_j) { return A::from_json_val(first_j) }
+            None { return Option::None }
+        }
+    }
+    val get_second: Fun() -> Option[B] = || {
+        match mems |> get("second") {
+            Some(second_j) { return B::from_json_val(second_j) }
+            None { return Option::None }
+        }
+    }
+    val get_third: Fun() -> Option[C] = || {
+        match mems |> get("third") {
+            Some(third_j) { return C::from_json_val(third_j) }
+            None { return Option::None }
+        }
+    }
+    match Triplet(get_first(), get_second(), get_third()) {
+        Triplet(Some(a), Some(b), Some(c)) { 
+            return Option::Some(Triplet(a, b, c)) 
+        }
+        _ { return Option::None }
+    }
+}
+pub fun Triplet::from_json[A, B, C](t: String) -> Option[mut Triplet[A, B, C]]
+    = t |> Json::parse() |> get_ok() 
+    |> map(Triplet::from_json_val[A, B, C]) |> flatten()
+
+pub fun List::from_json_val[T](v: Json) -> Option[mut List[T]]
+    = v 
+    |> get_list()
+    |> and_then[List[Json], mut List[T]](|jl| jl
+        |> values()
+        |> map[Json, Option[T]](T::from_json_val)
+        |> Option::all()
+    )
+pub fun List::from_json[T](t: String) -> Option[mut List[T]]
+    = t |> Json::parse() |> get_ok() 
+    |> map(List::from_json_val[T]) |> flatten()
+
+pub fun Set::from_json_val[T](v: Json) -> Option[mut Set[T]]
+    = List::from_json_val[T](v)
+    |> map[List[T], mut Set[T]](|l| l
+        |> values()
+        |> Set::collect()
+    )
+pub fun Set::from_json[T](t: String) -> Option[mut Set[T]]
+    = t |> Json::parse() |> get_ok() 
+    |> map(Set::from_json_val[T]) |> flatten()
+
+pub fun Map::from_json_val[K, V](v: Json) -> Option[mut Map[K, V]] {
+    mut jl: List[Json] = List::empty()
+    match v |> get_list() {
+        Some(l) { jl = l }
+        None { return Option::None }
+    }
+    val parse_entry: Fun(Json) -> Option[Pair[K, V]] = |je| {
+        mut mems: Map[String, Json] = Map::empty()
+        match je |> get_object() {
+            Some(m) { mems = m }
+            None { return Option::None }
+        }
+        val get_key: Fun(Map[String, Json]) -> Option[K] 
+            = |m| m |> get("key")
+            |> map[Json, Option[K]](K::from_json_val)
+            |> flatten()
+        val get_value: Fun(Map[String, Json]) -> Option[V] 
+            = |m| m |> get("value")
+            |> map[Json, Option[V]](V::from_json_val)
+            |> flatten()
+        match get_key(mems) {
+            Some(vk) {
+                match get_value(mems) {
+                    Some(vv) {
+                        return Option::Some(Pair(vk, vv))
+                    }
+                    _ { return Option::None }
+                }
+            }
+            _ { return Option::None }
+        }
+    }
+    return jl |> values()
+        |> map(parse_entry)
+        |> Option::all()
+        |> map[List[Pair[K, V]], mut Map[K, V]](|e| e
+            |> values()
+            |> Map::collect()
+        )
+}
+
+pub fun Map::from_json[T](t: String) -> Option[mut Map[T]]
+    = t |> Json::parse() |> get_ok() 
+    |> map(Map::from_json_val[T]) |> flatten()
+
+pub fun Option::from_json_val[T](v: Json) -> Option[Option[T]] {
+    match T::from_json_val(v) {
+        Some(pv) { return Option::Some(Option::Some(pv)) }
+        None {}
+    }
+    match v {
+        Null { return Option::Some(Option::None) }
+        _ { return Option::None }
+    }
+}
+pub fun Option::from_json[T](t: String) -> Option[Option[T]]
+    = t |> Json::parse() |> get_ok() 
+    |> map(Option::from_json_val[T]) |> flatten()
+
+// pub fun Result::from_json_val[O, E](v: Json) -> Option[Result[O, E]] {
+
+// }
+// pub fun Result::from_json[O, E](t: String) -> Option[Result[O, E]]
+//     = t |> Json::parse() |> map(Result::from_json_val[O, E]) |> flatten()
+
+pub fun StringBuilder::from_json_val(v: Json) -> Option[mut StringBuilder]
+    = v |> get_string()
+    |> map[String, mut StringBuilder](StringBuilder::of)
+pub fun StringBuilder::from_json(t: String) -> Option[mut StringBuilder]
+    = t |> Json::parse() |> get_ok() 
+    |> map(StringBuilder::from_json_val) |> flatten()

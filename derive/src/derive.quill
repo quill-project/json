@@ -29,53 +29,17 @@ fun value_from_json(v: String, t: Node) -> String {
     val default: String = "Option::None[" |> concat(ts) |> concat("]")
     match t {
         NamedType(Triplet(_, p, ta)) {
-            match p {
-                List::of("String") | List::of("std", "String") {
-                    return "json::Json::get_string(" |> concat(v) |> concat(")")
-                }
-                List::of("Float") | List::of("std", "Float") {
-                    return "json::Json::get_float(" |> concat(v) |> concat(")")
-                }
-                List::of("Int") | List::of("std", "Int") {
-                    return "json::Json::get_int(" |> concat(v) |> concat(")")
-                }
-                List::of("Bool") | List::of("std", "Bool") {
-                    return "json::Json::get_bool(" |> concat(v) |> concat(")")
-                }
-                List::of("Unit") | List::of("std", "Unit") {
-                    return "json::Json::get_unit(" |> concat(v) |> concat(")")
-                }
-                List::of("List") | List::of("std", "List") {
-                    val lton: Option[Node] = ta
-                        |> unwrap_or_else(List::empty)
-                        |> get(0)
-                    mut ltn: Node = Node::Unit
-                    match lton {
-                        Some(n) { ltn = n }
-                        None { return default }
-                    }
-                    val lt: String = ltn |> as_string()
-                    val r: mut StringBuilder = StringBuilder::empty()
-                    r |> push("std::Option::and_then[mut std::List[json::Json], ")
-                    r |> push(ts)
-                    r |> push("](")
-                    r |> push("json::Json::get_list(")
-                    r |> push(v)
-                    r |> push(")")
-                    r |> push(", ")
-                    r |> push("|jl| jl")
-                    r |> push("|> std::List::values[json::Json]()")
-                    r |> push("|> std::Sequence::map[json::Json, std::Option[")
-                    r |> push(lt)
-                    r |> push("]](|je| ")
-                    r |> push(value_from_json("je", ltn))
-                    r |> push(")")
-                    r |> push("|> std::Option::all()")
-                    r |> push(")")
-                    return r |> as_string()
-                }
-                _ {}
-            }
+            val tas: String = ta
+                |> unwrap_or_else(List::empty)
+                |> values()
+                |> map(Node::as_string)
+                |> join(", ")
+            return p |> values() |> join("::")
+                |> concat("::from_json_val[")
+                |> concat(tas)
+                |> concat("](")
+                |> concat(v)
+                |> concat(")")
         }
         _ {}
     }
@@ -102,17 +66,12 @@ fun derive_from_json(n: Option[Node], ctx: Compiler) -> List[Token] {
     }
     o |> push("pub fun ")
     o |> push(p)
-    o |> push("::from_json[")
+    o |> push("::from_json_val[")
     o |> push(ta)
-    o |> push("](i: std::String) -> std::Option[")
+    o |> push("](j: json::Json) -> std::Option[")
     if mref { o |> push("mut ") }
     o |> push(p)
     o |> push("] { ")
-    o |> push("mut j: json::Json = json::Json::Null ")
-    o |> push("match json::Json::parse(i) { ")
-    o |> push("std::Result::Ok(p) { j = p } ")
-    o |> push("std::Result::Err(_) { return std::Option::None } ")
-    o |> push("} ")
     o |> push("mut o: mut std::Map[std::String, json::Json] ")
     o |> push("= std::Map::empty() ")
     o |> push("match json::Json::get_object(j) { ")
@@ -205,8 +164,24 @@ fun derive_from_json(n: Option[Node], ctx: Compiler) -> List[Token] {
     }
     o |> push("return std::Option::None ")
     o |> push("} ")
-    return o 
-        |> as_string()
+    o |> push("pub fun ")
+    o |> push(p)
+    o |> push("::from_json[")
+    o |> push(ta)
+    o |> push("](t: std::String) -> std::Option[")
+    if mref { o |> push("mut ") }
+    o |> push(p)
+    o |> push("] { ")
+    o |> push("match json::Json::parse(t) { ")
+    o |> push("std::Result::Ok(j) { return ")
+    o |> push(p)
+    o |> push("::from_json_val[")
+    o |> push(ta)
+    o |> push("](j) } ")
+    o |> push("_ { return std::Option::None } ")
+    o |> push("} ")
+    o |> push("} ")
+    return o |> as_string()
         |> tokenize(ctx)
         |> expect("hard-coded declaration - should be valid")
 }
