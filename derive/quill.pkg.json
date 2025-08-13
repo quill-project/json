@@ -1,0 +1,14 @@
+{
+    "name": "json-derive",
+    "authors": ["schwalbe_t"],
+    "description": "",
+    "type": "plugin",
+    "backend": "c",
+    "dependencies": [
+        "https://github.com/quill-project/std-c",
+        "https://github.com/quill-project/macro"
+    ],
+    "macros": {
+        "derive_json": "json::derive_json"
+    }
+}

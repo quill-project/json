@@ -1,11 +1,10 @@
 {
-    "name": "json",
+    "name": "json-lib",
     "authors": ["schwalbe_t"],
     "description": "A JSON parsing and generation library written in Quill.",
     "type": "library",
     "backend": "any",
     "dependencies": [
-        "lib",
-        "derive"
+        "https://github.com/quill-project/std"
     ]
 }

@@ -1,0 +1,223 @@
+
+mod json
+
+use macro::*
+
+// pub enum Color(
+//     Red,
+//     Green,
+//     Blue,
+//     Rgb: RgbColor
+// )
+
+// pub struct RgbColor(red: Int, green: Int, blue: Int)
+
+// Color::Red                        => { "type": "Red" }
+// Color::Green                      => { "type": "Green" }
+// Color::Blue                       => { "type": "Blue" }
+// Color::Rgb(RgbColor(255, 127, 0)) => { 
+//     "type": "Rgb", 
+//     "value": {
+//         "red": 255,
+//         "green": 127,
+//         "blue": 0
+//     } 
+// }
+
+fun value_from_json(v: String, t: Node) -> String {
+    val ts: String = t |> as_string()
+    val default: String = "Option::None[" |> concat(ts) |> concat("]")
+    match t {
+        NamedType(Triplet(_, p, ta)) {
+            match p {
+                List::of("String") | List::of("std", "String") {
+                    return "json::Json::get_string(" |> concat(v) |> concat(")")
+                }
+                List::of("Float") | List::of("std", "Float") {
+                    return "json::Json::get_float(" |> concat(v) |> concat(")")
+                }
+                List::of("Int") | List::of("std", "Int") {
+                    return "json::Json::get_int(" |> concat(v) |> concat(")")
+                }
+                List::of("Bool") | List::of("std", "Bool") {
+                    return "json::Json::get_bool(" |> concat(v) |> concat(")")
+                }
+                List::of("Unit") | List::of("std", "Unit") {
+                    return "json::Json::get_unit(" |> concat(v) |> concat(")")
+                }
+                List::of("List") | List::of("std", "List") {
+                    val lton: Option[Node] = ta
+                        |> unwrap_or_else(List::empty)
+                        |> get(0)
+                    mut ltn: Node = Node::Unit
+                    match lton {
+                        Some(n) { ltn = n }
+                        None { return default }
+                    }
+                    val lt: String = ltn |> as_string()
+                    val r: mut StringBuilder = StringBuilder::empty()
+                    r |> push("std::Option::and_then[mut std::List[json::Json], ")
+                    r |> push(ts)
+                    r |> push("](")
+                    r |> push("json::Json::get_list(")
+                    r |> push(v)
+                    r |> push(")")
+                    r |> push(", ")
+                    r |> push("|jl| jl")
+                    r |> push("|> std::List::values[json::Json]()")
+                    r |> push("|> std::Sequence::map[json::Json, std::Option[")
+                    r |> push(lt)
+                    r |> push("]](|je| ")
+                    r |> push(value_from_json("je", ltn))
+                    r |> push(")")
+                    r |> push("|> std::Option::all()")
+                    r |> push(")")
+                    return r |> as_string()
+                }
+                _ {}
+            }
+        }
+        _ {}
+    }
+    return default
+}
+
+fun derive_from_json(n: Option[Node], ctx: Compiler) -> List[Token] {
+    val o: mut StringBuilder = StringBuilder::empty()
+    mut p: String = ""
+    mut ta: String = ""
+    mut mref: Bool = false
+    match n {
+        Some(Node::StructDecl(StructDecl(_, path, type_args, _))) {
+            p = path |> values() |> join("::")
+            ta = type_args |> values() |> join(", ")
+            mref = true
+        }
+        Some(Node::EnumDecl(EnumDecl(_, path, type_args, _))) {
+            p = path |> values() |> join("::")
+            ta = type_args |> values() |> join(", ")
+            mref = false
+        }
+        _ { return List::empty() }
+    }
+    o |> push("pub fun ")
+    o |> push(p)
+    o |> push("::from_json[")
+    o |> push(ta)
+    o |> push("](i: std::String) -> std::Option[")
+    if mref { o |> push("mut ") }
+    o |> push(p)
+    o |> push("] { ")
+    o |> push("mut j: json::Json = json::Json::Null ")
+    o |> push("match json::Json::parse(i) { ")
+    o |> push("std::Result::Ok(p) { j = p } ")
+    o |> push("std::Result::Err(_) { return std::Option::None } ")
+    o |> push("} ")
+    o |> push("mut o: mut std::Map[std::String, json::Json] ")
+    o |> push("= std::Map::empty() ")
+    o |> push("match json::Json::get_object(j) { ")
+    o |> push("std::Option::Some(m) { o = m }")
+    o |> push("std::Option::None { return std::Option::None }")
+    o |> push("} ")
+    match n {
+        Some(Node::StructDecl(StructDecl(_, _, _, members))) {
+            for mem_i: members |> indices() {
+                val member: Pair[String, Node] = members |> at(mem_i)
+                o |> push("match std::Map::get(o, \"")
+                o |> push(member.first)
+                o |> push("\") { ")
+                val mem_v: String = "mem" |> concat(mem_i |> as_string())
+                val mem_vj: String = mem_v |> concat("j")
+                o |> push("std::Option::Some(")
+                o |> push(mem_vj)
+                o |> push(") { ")
+                o |> push("match ")
+                o |> push(value_from_json(mem_vj, member.second))
+                o |> push(" { ")
+                o |> push("std::Option::Some(")
+                o |> push(mem_v)
+                o |> push(") { ")
+            }
+            o |> push("return std::Option::Some(")
+            o |> push(p)
+            o |> push("[")
+            o |> push(ta)
+            o |> push("]")
+            o |> push("(")
+            o |> push(members
+                |> indices()
+                |> map[Int, String](|i| "mem" |> concat(i |> as_string()))
+                |> join(", ")
+            )
+            o |> push(")) ")
+            o |> push("} _ {} } } _ {} } " |> repeat(members |> length()))
+        }
+        Some(Node::EnumDecl(EnumDecl(_, _, _, members))) {
+            o |> push("mut type: std::String = \"\"")
+            o |> push("match std::Map::get(o, \"type\") { ")
+            o |> push("std::Option::Some(jt) { ")
+            o |> push("match json::Json::get_string(jt) { ")
+            o |> push("std::Option::Some(t) { type = t }")
+            o |> push("std::Option::None { return std::Option::None }")
+            o |> push("} } ")
+            o |> push("std::Option::None { return std::Option::None } ")
+            o |> push("} ")
+            o |> push("match type { ")
+            for member: members |> values() {
+                o |> push("\"")
+                o |> push(member.first)
+                o |> push("\" { ")
+                match member.second {
+                    Node::NamedType(Triplet(_, List::of("Unit"), _)) |
+                    Node::NamedType(Triplet(_, List::of("std", "Unit"), _)) {
+                        o |> push("return std::Option::Some(")
+                        o |> push(p)
+                        o |> push("::")
+                        o |> push(member.first)
+                        o |> push(")")
+                    }
+                    other {
+                        o |> push("match std::Map::get(o, \"value\") { ")
+                        o |> push("std::Option::Some(jv) { ")
+                        o |> push("match ")
+                        o |> push(value_from_json("jv", other))
+                        o |> push(" { ")
+                        o |> push("std::Option::Some(v) { ")
+                        o |> push("return std::Option::Some(")
+                        o |> push(p)
+                        o |> push("::")
+                        o |> push(member.first)
+                        o |> push("(v))")
+                        o |> push("} ")
+                        o |> push("_ {} ")
+                        o |> push("} ")
+                        o |> push("} ")
+                        o |> push("_ {} ")
+                        o |> push("}")
+                    }
+                }
+                o |> push("} ")
+            }
+            o |> push("_ {} ")
+            o |> push("} ")
+        }
+        _ { return List::empty() }
+    }
+    o |> push("return std::Option::None ")
+    o |> push("} ")
+    return o 
+        |> as_string()
+        |> tokenize(ctx)
+        |> expect("hard-coded declaration - should be valid")
+}
+
+fun derive_as_json(n: Option[Node], ctx: Compiler) -> List[Token] {
+    return List::empty()
+}
+
+pub fun derive_json(input: List[Token], ctx: Compiler) -> List[Token] {
+    val n: Option[Node] = input |> parse_decl(ctx)
+    return input
+        |> concat(derive_from_json(n, ctx))
+        |> concat(derive_as_json(n, ctx))
+}
